@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "Search by WB article",
+      "method": "POST",
+      "path": "/",
+      "body": {"query": "265584946", "mode": "article"},
+      "expectedStatus": 200,
+      "expectedBody": "mode",
+      "bodyMatcher": "contains"
+    },
+    {
+      "name": "Search by name",
+      "method": "POST",
+      "path": "/",
+      "body": {"query": "iPhone 15", "mode": "name"},
+      "expectedStatus": 200,
+      "expectedBody": "mode",
+      "bodyMatcher": "contains"
+    },
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200,
+      "expectedBody": "",
+      "bodyMatcher": "contains"
+    }
+  ]
+}
