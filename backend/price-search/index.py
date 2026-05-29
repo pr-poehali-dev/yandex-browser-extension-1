@@ -2,6 +2,7 @@
 Поиск минимальных цен на товар по маркетплейсам (WB по артикулу, остальные по названию).
 """
 import json
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -70,23 +71,52 @@ def handler(event: dict, context) -> dict:
 
 
 def fetch_json(url: str, extra_headers: dict = None) -> dict | None:
-    try:
-        req = urllib.request.Request(url)
-        req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        req.add_header("Accept", "application/json")
-        if extra_headers:
-            for k, v in extra_headers.items():
-                req.add_header(k, v)
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return None
+    last_err = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+            req.add_header("Accept", "application/json, text/plain, */*")
+            req.add_header("Accept-Language", "ru-RU,ru;q=0.9")
+            req.add_header("Origin", "https://www.wildberries.ru")
+            req.add_header("Referer", "https://www.wildberries.ru/")
+            if extra_headers:
+                for k, v in extra_headers.items():
+                    req.add_header(k, v)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                raw = resp.read().decode("utf-8")
+                return json.loads(raw)
+        except urllib.error.HTTPError as e:
+            last_err = f"HTTP {e.code}"
+            if e.code == 429:
+                time.sleep(0.7 * (attempt + 1))
+                continue
+            print(f"[fetch_json] {last_err} for {url[:80]}")
+            return None
+        except Exception as e:
+            last_err = str(e)
+            time.sleep(0.4)
+            continue
+    print(f"[fetch_json] failed after retries: {last_err} for {url[:80]}")
+    return None
+
+
+WB_CARD_HOSTS = [
+    "https://card.wb.ru/cards/v2/detail",
+    "https://card.wb.ru/cards/v1/detail",
+    "https://u-card.wb.ru/cards/v2/detail",
+]
 
 
 def search_wb_by_article(article: str) -> dict | None:
-    url = f"https://card.wb.ru/cards/v2/detail?appType=1&curr=rub&dest=-1257786&spp=30&nm={article}"
-    data = fetch_json(url)
+    data = None
+    for host in WB_CARD_HOSTS:
+        url = f"{host}?appType=1&curr=rub&dest=-1257786&spp=30&nm={article}"
+        data = fetch_json(url)
+        if data and data.get("data", {}).get("products"):
+            break
     if not data:
+        print(f"[wb_article] no data for article {article}")
         return None
     try:
         products = data["data"]["products"]
@@ -146,11 +176,19 @@ def search_wb_by_article(article: str) -> dict | None:
         return None
 
 
+WB_SEARCH_VERSIONS = ["v13", "v12", "v9", "v8"]
+
+
 def search_wb_by_name(query: str) -> dict | None:
     encoded = urllib.parse.quote(query)
-    url = f"https://search.wb.ru/exactmatch/ru/common/v9/search?appType=1&curr=rub&dest=-1257786&query={encoded}&resultset=catalog&sort=popular&spp=30&suppressSpellcheck=false"
-    data = fetch_json(url, {"x-queryid": "qid123"})
+    data = None
+    for v in WB_SEARCH_VERSIONS:
+        url = f"https://search.wb.ru/exactmatch/ru/common/{v}/search?appType=1&curr=rub&dest=-1257786&query={encoded}&resultset=catalog&sort=popular&spp=30&suppressSpellcheck=false"
+        data = fetch_json(url, {"x-queryid": "qid123"})
+        if data and data.get("data", {}).get("products"):
+            break
     if not data:
+        print(f"[wb_name] no data for query {query}")
         return None
     try:
         products = data["data"]["products"]
@@ -167,6 +205,10 @@ def search_wb_by_name(query: str) -> dict | None:
 
         price = round(price_raw / 100) if price_raw else None
         basic_price = p.get("priceU")
+        if not price_raw:
+            sale = p.get("salePriceU")
+            if sale:
+                price = round(sale / 100)
         original_price = round(basic_price / 100) if basic_price else None
 
         name = p.get("name", "")
